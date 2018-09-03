@@ -1,0 +1,85 @@
+Pointer authentication in AArch64 Linux
+=======================================
+
+Author: Mark Rutland <mark.rutland@arm.com>
+Date: 2017-07-19
+
+This document briefly describes the provision of pointer authentication
+functionality in AArch64 Linux.
+
+
+Architecture overview
+---------------------
+
+The ARMv8.3 Pointer Authentication extension adds primitives that can be
+used to mitigate certain classes of attack where an attacker can corrupt
+the contents of some memory (e.g. the stack).
+
+The extension uses a Pointer Authentication Code (PAC) to determine
+whether pointers have been modified unexpectedly. A PAC is derived from
+a pointer, another value (such as the stack pointer), and a secret key
+held in system registers.
+
+The extension adds instructions to insert a valid PAC into a pointer,
+and to verify/remove the PAC from a pointer. The PAC occupies a number
+of high-order bits of the pointer, which varies dependent on the
+configured virtual address size and whether pointer tagging is in use.
+
+A subset of these instructions have been allocated from the HINT
+encoding space. In the absence of the extension (or when disabled),
+these instructions behave as NOPs. Applications and libraries using
+these instructions operate correctly regardless of the presence of the
+extension.
+
+
+Basic support
+-------------
+
+When CONFIG_ARM64_POINTER_AUTHENTICATION is selected, and relevant HW
+support is present, the kernel will assign a random APIAKey value to
+each process at exec*() time. This key is shared by all threads within
+the process, and the key is preserved across fork(). Presence of
+functionality using APIAKey is advertised via HWCAP_APIA.
+
+Recent versions of GCC can compile code with APIAKey-based return
+address protection when passed the -msign-return-address option. This
+uses instructions in the HINT space, and such code can run on systems
+without the pointer authentication extension.
+
+The remaining instruction and data keys (APIBKey, APDAKey, APDBKey) are
+reserved for future use, and instructions using these keys must not be
+used by software until a purpose and scope for their use has been
+decided. To enable future software using these keys to function on
+contemporary kernels, where possible, instructions using these keys are
+made to behave as NOPs.
+
+The generic key (APGAKey) is currently unsupported. Instructions using
+the generic key must not be used by software.
+
+
+Debugging
+---------
+
+When CONFIG_ARM64_POINTER_AUTHENTICATION is selected, and relevant HW
+support is present, the kernel will expose the position of TTBR0 PAC
+bits in the NT_ARM_PAC_MASK regset (struct user_pac_mask), which
+userspace can acqure via PTRACE_GETREGSET.
+
+Separate masks are exposed for data pointers and instruction pointers,
+as the set of PAC bits can vary between the two. Debuggers should not
+expect that HWCAP_APIA implies the presence (or non-presence) of this
+regset -- in future the kernel may support the use of APIBKey, APDAKey,
+and/or APBAKey, even in the absence of APIAKey.
+
+Note that the masks apply to TTBR0 addresses, and are not valid to apply
+to TTBR1 addresses (e.g. kernel pointers).
+
+
+Virtualization
+--------------
+
+When CONFIG_ARM64_POINTER_AUTHENTICATION is selected, and uniform HW
+support is present, KVM will context switch all keys used by vCPUs. If
+HW support is not uniform, EL2 will trap accesses to keys, and use of
+instructions erroneously enabled by EL1, and will inject an UNDEFINED
+exception into the guest.
